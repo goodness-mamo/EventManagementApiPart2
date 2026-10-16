@@ -20,23 +20,62 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Setup .NET 8
+      - name: Setup .NET
         uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
 
-      - name: List Repository Files
+      - name: Locate Projects
+        shell: bash
         run: |
-          pwd
-          find . -maxdepth 4 \
-            \( -name "*.sln" -o -name "*.slnx" -o -name "*.csproj" \) \
-            -print
+          find . -type f \( -name "*.csproj" -o -name "*.sln" -o -name "*.slnx" \)
 
       - name: Restore Dependencies
-        run: dotnet restore
+        shell: bash
+        run: |
+          set -e
+          if [ -f "EventManagementApi.slnx" ] && \
+             dotnet sln EventManagementApi.slnx list >/dev/null 2>&1; then
+            dotnet restore EventManagementApi.slnx
+          else
+            find . -type f -name "*.csproj" \
+              ! -path "*/bin/*" ! -path "*/obj/*" \
+              -print0 | xargs -0 -r -n 1 dotnet restore
+          fi
 
-      - name: Build Solution
-        run: dotnet build --configuration Release --no-restore
+      - name: Build API
+        shell: bash
+        run: |
+          set -e
+          find . -type f -name "*.csproj" \
+            ! -path "*/bin/*" ! -path "*/obj/*" \
+            -print0 | while IFS= read -r -d '' project; do
+              dotnet build "$project" \
+                --configuration Release --no-restore
+            done
 
-      - name: Run Unit Tests and Collect Coverage
-        run: dotnet test --configuration Release --no-build --verbosity normal
+      - name: Run Unit Tests
+        shell: bash
+        run: |
+          set -e
+          mapfile -d '' projects < <(
+            find . -type f -name "*.csproj" \
+              ! -path "*/bin/*" ! -path "*/obj/*" \
+              -print0
+          )
+
+          found_tests=false
+
+          for project in "${projects[@]}"; do
+            if grep -qE 'Microsoft.NET.Test.Sdk|IsTestProject' "$project"; then
+              found_tests=true
+              dotnet test "$project" \
+                --configuration Release --no-build \
+                --logger "console;verbosity=normal"
+            fi
+          done
+
+          if [ "$found_tests" = false ]; then
+            echo "::error::No test project detected. Add a test project to run CI tests."
+            exit 1
+          fi
