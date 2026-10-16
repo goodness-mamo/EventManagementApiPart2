@@ -1,0 +1,112 @@
+
+name: EventManagementApi - Full CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+
+  pull_request:
+    branches:
+      - main
+      - develop
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: eventmanagementapi-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build, Test and Code Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      # 1. Download repository source code
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      # 2. Configure .NET 8
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      # 3. Display SDK and runtime information
+      - name: Display .NET Information
+        run: dotnet --info
+
+      # 4. Restore NuGet dependencies
+      - name: Restore Dependencies
+        run: dotnet restore EventManagementApi.sln
+
+      # 5. Build the complete solution
+      - name: Build Solution
+        run: >
+          dotnet build EventManagementApi.sln
+          --configuration Release
+          --no-restore
+
+      # 6. Run xUnit tests and collect coverage
+      - name: Run Unit Tests and Collect Coverage
+        run: >
+          dotnet test EventManagementApi.Tests/EventManagementApi.Tests.csproj
+          --configuration Release
+          --no-build
+          --logger "trx;LogFileName=test-results.trx"
+          --results-directory TestResults
+          --collect:"XPlat Code Coverage"
+
+      # 7. Generate an HTML coverage report
+      - name: Install ReportGenerator
+        if: always()
+        run: dotnet tool install --global dotnet-reportgenerator-globaltool
+
+      - name: Generate Coverage Report
+        if: always()
+        shell: bash
+        run: |
+          if find TestResults -name 'coverage.cobertura.xml' -print -quit 2>/dev/null | grep -q .; then
+            reportgenerator \
+              "-reports:TestResults/**/coverage.cobertura.xml" \
+              "-targetdir:CoverageReport" \
+              "-reporttypes:Html;Cobertura"
+          else
+            echo "No coverage files found. Check the test run and Coverlet configuration."
+          fi
+
+      # 8. Upload test results even if tests fail
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EventManagementApi-Test-Results
+          path: TestResults/**/*.trx
+          if-no-files-found: warn
+          retention-days: 14
+
+      # 9. Upload coverage data
+      - name: Upload Coverage Data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EventManagementApi-Coverage-Data
+          path: TestResults/**/coverage.cobertura.xml
+          if-no-files-found: warn
+          retention-days: 14
+
+      # 10. Upload the readable HTML coverage report
+      - name: Upload HTML Coverage Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EventManagementApi-Coverage-Report
+          path: CoverageReport
+          if-no-files-found: warn
+          retention-days: 14
